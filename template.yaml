@@ -1,66 +1,17 @@
-## SAM template (Lambdas + StepFunction)
-
-AWSTemplateFormatVersion: '2010-09-09'
-Transform: AWS::Serverless-2016-10-31
-Description: Bitget Orders Extraction
-
-Globals:
-  Function:
-    Timeout: 60
-    Environment:
-      Variables:
-        BITGET_API_KEY: !Ref BitgetApiKey
-        BITGET_SECRET_KEY: !Ref BitgetSecretKey
-        BITGET_PASSPHRASE: !Ref BitgetPassphrase
-
-Parameters:
-  BitgetApiKey:
-    Type: String
-    Default: bg_680026a00a63d58058c738c952ce67a2
-  BitgetSecretKey:
-    Type: String
-    NoEcho: true
-    Default: 7abac4a9404e82830db5f9db5e867a8370c7e59dc74e52615c59552d0afbd7c9
-  BitgetPassphrase:
-    Type: String
-    NoEcho: true
-    Default: 22Dominic22
-
-Resources:
-  CoordinatorFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      CodeUri: lambdas/coordinator/
-      Handler: app.lambda_handler
-      Runtime: python3.11
-
-  WorkerFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      CodeUri: lambdas/worker/
-      Handler: app.lambda_handler
-      Runtime: python3.11
-
-  CollectorFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      CodeUri: lambdas/collector/
-      Handler: app.lambda_handler
-      Runtime: python3.11
-
-  BitgetOrdersStateMachine:
-    Type: AWS::StepFunctions::StateMachine
-    Properties:
-      StateMachineName: BitgetOrdersStateMachine
-      DefinitionString: !Sub |
+BitgetOrdersStateMachine:
+  Type: AWS::StepFunctions::StateMachine
+  Properties:
+    StateMachineName: BitgetOrdersStateMachine
+    DefinitionString:
+      Fn::Sub: |
         {
-          "Comment": "Bitget Orders Extraction",
+          "Comment": "Bitget Orders Extraction - Optimized Parallel",
           "StartAt": "ProcessSymbols",
           "States": {
             "ProcessSymbols": {
               "Type": "Map",
               "ItemsPath": "$.symbols",
-              "MaxConcurrency": 10,
+              "MaxConcurrency": 50,          # Ajusta según la capacidad de tus Lambdas
               "Iterator": {
                 "StartAt": "ExtractOrders",
                 "States": {
@@ -84,31 +35,7 @@ Resources:
             }
           }
         }
-      RoleArn: !GetAtt StepFunctionRole.Arn
-
-  StepFunctionRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: states.amazonaws.com
-            Action: sts:AssumeRole
-      Policies:
-        - PolicyName: InvokeLambda
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - lambda:InvokeFunction
-                Resource:
-                  - !GetAtt WorkerFunction.Arn
-                  - !GetAtt CollectorFunction.Arn
-
-Outputs:
-  StateMachineArn:
-    Description: ARN of the Step Function
-    Value: !Ref BitgetOrdersStateMachine
+    RoleArn:
+      Fn::GetAtt:
+        - StepFunctionRole
+        - Arn

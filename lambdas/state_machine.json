@@ -1,30 +1,137 @@
 {
-  "Comment": "Bitget Orders Extraction with parallel processing",
-  "StartAt": "ProcessSymbols",
+  "Comment": "Massive parallel extraction of Bitget futures orders across all symbols",
+  "StartAt": "PrepareWorkerInputs",
   "States": {
-    "ProcessSymbols": {
+    "PrepareWorkerInputs": {
+      "Type": "Pass",
+      "Result": {
+        "worker_configs": []
+      },
+      "Parameters": {
+        "symbol_batches.$": "$.symbol_batches",
+        "use_fills.$": "$.use_fills",
+        "start_time.$": "$.start_time",
+        "end_time.$": "$.end_time",
+        "execution_id.$": "$.execution_id",
+        "total_symbols.$": "$.total_symbols"
+      },
+      "Next": "CreateWorkerTasks"
+    },
+    
+    "CreateWorkerTasks": {
       "Type": "Map",
-      "ItemsPath": "$.symbols",
-      "MaxConcurrency": 10,
+      "ItemsPath": "$.symbol_batches",
+      "MaxConcurrency": 20,
       "Iterator": {
-        "StartAt": "ExtractOrders",
+        "StartAt": "ProcessBatch",
         "States": {
-          "ExtractOrders": {
+          "ProcessBatch": {
             "Type": "Task",
-            "Resource": "${WorkerLambdaArn}",
+            "Resource": "arn:aws:states:::lambda:invoke",
             "Parameters": {
-              "symbol.$": "$"
+              "FunctionName": "bitget-worker-lambda",
+              "Payload": {
+                "symbols.$": "$",
+                "use_fills.$": "$$.Execution.Input.use_fills",
+                "start_time.$": "$$.Execution.Input.start_time",
+                "end_time.$": "$$.Execution.Input.end_time",
+                "worker_id.$": "$$.State.EnteredTime"
+              }
+            },
+            "ResultPath": "$.worker_result",
+            "Retry": [
+              {
+                "ErrorEquals": ["States.TaskFailed"],
+                "IntervalSeconds": 2,
+                "MaxAttempts": 3,
+                "BackoffRate": 2.0
+              }
+            ],
+            "Catch": [
+              {
+                "ErrorEquals": ["States.ALL"],
+                "Next": "HandleWorkerError",
+                "ResultPath": "$.error"
+              }
+            ],
+            "Next": "WorkerSuccess"
+          },
+          
+          "HandleWorkerError": {
+            "Type": "Pass",
+            "Result": {
+              "success": false,
+              "worker_id": "failed-worker",
+              "error": "Worker execution failed",
+              "processed_symbols": 0,
+              "total_orders": 0,
+              "orders": [],
+              "processing_time": 0
+            },
+            "End": true
+          },
+          
+          "WorkerSuccess": {
+            "Type": "Pass",
+            "Parameters": {
+              "success.$": "$.worker_result.Payload.success",
+              "worker_id.$": "$.worker_result.Payload.worker_id",
+              "processed_symbols.$": "$.worker_result.Payload.processed_symbols",
+              "failed_symbols.$": "$.worker_result.Payload.failed_symbols",
+              "total_orders.$": "$.worker_result.Payload.total_orders",
+              "orders.$": "$.worker_result.Payload.orders",
+              "processing_time.$": "$.worker_result.Payload.processing_time",
+              "symbol_stats.$": "$.worker_result.Payload.symbol_stats"
             },
             "End": true
           }
         }
       },
-      "ResultPath": "$.results",
+      "ResultPath": "$.worker_results",
       "Next": "CollectResults"
     },
+    
     "CollectResults": {
       "Type": "Task",
-      "Resource": "${CollectorLambdaArn}",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "bitget-collector-lambda",
+        "Payload": {
+          "worker_results.$": "$.worker_results",
+          "execution_metadata": {
+            "execution_id.$": "$.execution_id",
+            "total_symbols.$": "$.total_symbols",
+            "start_time.$": "$.start_time",
+            "end_time.$": "$.end_time",
+            "use_fills.$": "$.use_fills"
+          }
+        }
+      },
+      "ResultPath": "$.final_result",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed"],
+          "IntervalSeconds": 1,
+          "MaxAttempts": 2,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Next": "FormatFinalOutput"
+    },
+    
+    "FormatFinalOutput": {
+      "Type": "Pass",
+      "Parameters": {
+        "success.$": "$.final_result.Payload.success",
+        "data.$": "$.final_result.Payload.data",
+        "duration_seconds.$": "$.final_result.Payload.duration_seconds",
+        "total_orders.$": "$.final_result.Payload.total_orders",
+        "processed_symbols.$": "$.final_result.Payload.processed_symbols",
+        "failed_symbols.$": "$.final_result.Payload.failed_symbols",
+        "s3_location.$": "$.final_result.Payload.s3_location",
+        "processing_stats.$": "$.final_result.Payload.processing_stats",
+        "execution_metadata.$": "$.final_result.Payload.metadata"
+      },
       "End": true
     }
   }

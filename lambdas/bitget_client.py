@@ -1,4 +1,4 @@
-# Cliente pequeño para Bitget (firma + helpers)
+# Cliente pequeño para Bitget (firma + helpers) - FIXED FOR FUTURES
 
 import hashlib
 import hmac
@@ -44,140 +44,59 @@ class BitgetClient:
             'Content-Type': 'application/json'
         }
     
-    def get_orders(self, symbol: str, status: str = 'all') -> List[Dict]:
-        """
-        Get orders for a specific symbol using Bitget API v1
-        
-        Args:
-            symbol: Trading pair symbol (e.g., 'BTCUSDT' or 'BTCUSDT_UMCBL')
-            status: Order status to filter by. Options: 'all' (default), 'new', 'partially_filled', 'filled', 'cancelled'
-        """
-        # Remove any suffix like '_UMCBL' from the symbol
-        clean_symbol = symbol.split('_')[0]
-        path = "/api/spot/v1/trade/orders"
-        
-        # Map status to API values
-        status_map = {
-            'all': 'all',
-            'new': 'new',
-            'partially_filled': 'partially_filled',
-            'filled': 'filled',
-            'cancelled': 'cancelled'
-        }
-        
-        params = {
-            'symbol': clean_symbol,  # Use the cleaned symbol
-            'status': status_map.get(status.lower(), 'all'),
-            'limit': 100
-        }
-        
-        full_path = f"{path}?{'&'.join([f'{k}={v}' for k, v in params.items()])}"
-        headers = self._get_headers('GET', full_path)
-        url = f"{self.base_url}{full_path}"
-        
+    def get_futures_symbols(self) -> List[str]:
+        """Get all active futures symbols"""
         try:
-            response = requests.get(url, headers=headers, timeout=10)
-            response.raise_for_status()
+            path = "/api/v2/mix/market/contracts"
+            params = {"productType": "USDT-FUTURES"}  # Corrected case
+            query_string = "&".join([f"{k}={v}" for k, v in params.items()])
+            full_path = f"{path}?{query_string}"
             
+            headers = self._get_headers('GET', full_path)
+            url = f"{self.base_url}{full_path}"
+            
+            print(f"Fetching symbols from: {url}")
+            
+            response = requests.get(url, headers=headers, timeout=30)
+            print(f"Response status: {response.status_code}")
+            
+            response.raise_for_status()
             data = response.json()
+            
             if data.get('code') != '00000':
-                error_msg = f"API Error for {symbol}: {data.get('msg')}"
-                logger.error(error_msg)
-                print(error_msg)
+                logger.error(f"API Error getting symbols: {data.get('msg')}")
                 return []
             
-            orders = data.get('data', [])
-            if not orders:
-                logger.info(f"No orders found for {symbol} with status '{status}'. Full response: {json.dumps(data, indent=2)}")
-                print(f"No orders found for {symbol} with status '{status}'. Check logs for full response.")
+            contracts = data.get('data', [])
+            symbols = [contract['symbol'] for contract in contracts if contract.get('symbol')]
             
-            return orders
+            logger.info(f"Found {len(symbols)} futures symbols")
+            return symbols
             
         except Exception as e:
-            error_msg = f"Error fetching orders for {symbol}: {str(e)}"
-            logger.error(error_msg)
-            print(error_msg)
+            logger.error(f"Error fetching futures symbols: {str(e)}")
             return []
 
-    def fetch_all_history_orders_for_symbol(client, symbol, start_time=None, end_time=None, per_page=100, max_pages=None, sleep_between=0.15):
+    def get_futures_history_orders(self, symbol: str, start_time: Optional[int] = None, 
+                                 end_time: Optional[int] = None, limit: int = 100, 
+                                 end_id: Optional[str] = None) -> dict:
         """
-        Obtiene *todas* las órdenes históricas para `symbol` usando paginación.
-        - client: instancia de BitgetClient con método `history_orders(symbol, startTime, endTime, limit, cursor)`
-        (si no existe, añade un método en bitget_client que llame a /api/v2/spot/trade/history-orders o al endpoint correcto).
-        - per_page: máximo 100 (limit de la API).
-        - sleep_between: segundos entre peticiones (para evitar rate limits).
-        - max_pages: opcional, límite de páginas para proteger contra loops infinitos.
-        Retorna: lista de orders (raw).
+        Get futures historical orders for a specific symbol
+        Uses: /api/v2/mix/order/history-orders
         """
-
-        all_items = []
-        cursor = None
-        page = 0
-        while True:
-            page += 1
-            try:
-                # Llamada al cliente. Ajusta según la firma de tu client (aquí asumimos un método "history_orders")
-                resp = client.history_orders(symbol=symbol, start_time=start_time, end_time=end_time, limit=per_page, cursor=cursor)
-            except Exception as e:
-                logger.exception("Error calling history_orders: %s", e)
-                # retry/backoff básico
-                time.sleep(1.0)
-                continue
-
-            # Normalizar estructura de la respuesta (Bitget suele devolver {'code':..., 'data': ...})
-            data = resp.get('data') if isinstance(resp, dict) else None
-
-            # Detectar items y cursor según variantes del API
-            items = []
-            next_cursor = None
-
-            if isinstance(data, dict):
-                # Ejemplos: data puede contener keys como 'data' (lista), 'result', 'list', 'rows'
-                items = data.get('data') or data.get('result') or data.get('list') or data.get('rows') or []
-                next_cursor = data.get('cursor') or data.get('nextCursor') or data.get('next') or None
-            elif isinstance(data, list):
-                items = data
-                next_cursor = None
-            else:
-                # fallback: intentar buscar 'data' directo en resp
-                if isinstance(resp, dict) and 'cursor' in resp:
-                    next_cursor = resp.get('cursor')
-                items = resp.get('data') if isinstance(resp.get('data'), list) else []
-
-            # Agregar items
-            if items:
-                all_items.extend(items)
-
-            logger.info("Fetched page %s, got %d items, next_cursor=%s", page, len(items), str(next_cursor))
-
-            # Control de terminación
-            if not next_cursor or (max_pages and page >= max_pages):
-                break
-
-            # Preparar siguiente iteración
-            cursor = next_cursor
-            time.sleep(sleep_between)
-
-        return all_items
-
-    def history_orders(self, symbol: str, start_time: Optional[int] = None, end_time: Optional[int] = None,
-                      limit: int = 100, cursor: Optional[str] = None) -> dict:
-        """
-        Fetch historical orders for a symbol with optional time window and pagination cursor.
-        Returns raw API response (dict).
-        """
-        path = "/api/v2/spot/trade/history-orders"
-        # /api/v2/spot/trade/history-orders
+        path = "/api/v2/mix/order/history-orders"
         params = {
-            "symbol": symbol,
-            "limit": limit
+            "symbol": symbol.strip(),  # Remove any whitespace
+            "productType": "USDT-FUTURES",  # Corrected case
+            "limit": min(100, max(1, int(limit)))
         }
-        if start_time:
+        
+        if start_time is not None:
             params["startTime"] = start_time
-        if end_time:
+        if end_time is not None:
             params["endTime"] = end_time
-        if cursor:
-            params["cursor"] = cursor
+        if end_id:
+            params["endId"] = end_id
 
         query_string = "&".join([f"{k}={v}" for k, v in params.items()])
         full_path = f"{path}?{query_string}"
@@ -185,9 +104,152 @@ class BitgetClient:
         url = f"{self.base_url}{full_path}"
 
         try:
-            response = requests.get(url, headers=headers, timeout=10)
-            response.raise_for_status()
-            return response.json()
+            print(f"Fetching orders for {symbol}: {url}")
+            resp = requests.get(url, headers=headers, timeout=30)
+            print(f"Response status for {symbol}: {resp.status_code}")
+            
+            if resp.status_code != 200:
+                print(f"Error response for {symbol}: {resp.text}")
+            
+            resp.raise_for_status()
+            data = resp.json()
+            
+            print(f"API response code for {symbol}: {data.get('code')}")
+            if data.get('code') != '00000':
+                print(f"API error for {symbol}: {data.get('msg')}")
+            else:
+                orders_count = len(data.get('data', {}).get('orderList', [])) if isinstance(data.get('data'), dict) else 0
+                print(f"Found {orders_count} orders for {symbol}")
+            
+            return data
         except Exception as e:
-            logger.error(f"Error in history_orders for {symbol}: {e}")
+            logger.error(f"futures_history_orders error for {symbol}: {e}")
+            print(f"Exception for {symbol}: {e}")
             return {"code": "error", "msg": str(e), "data": []}
+
+    def get_futures_fills(self, symbol: str, start_time: Optional[int] = None, 
+                         end_time: Optional[int] = None, limit: int = 100, 
+                         end_id: Optional[str] = None) -> dict:
+        """
+        Get futures fills/trades (executed orders) - this is more likely to have data
+        Uses: /api/v2/mix/order/fills
+        """
+        path = "/api/v2/mix/order/fills"
+        params = {
+            "symbol": symbol.strip(),
+            "productType": "USDT-FUTURES",
+            "limit": min(100, max(1, int(limit)))
+        }
+        
+        if start_time is not None:
+            params["startTime"] = start_time
+        if end_time is not None:
+            params["endTime"] = end_time
+        if end_id:
+            params["endId"] = end_id
+
+        query_string = "&".join([f"{k}={v}" for k, v in params.items()])
+        full_path = f"{path}?{query_string}"
+        headers = self._get_headers('GET', full_path)
+        url = f"{self.base_url}{full_path}"
+
+        try:
+            print(f"Fetching fills for {symbol}: {url}")
+            resp = requests.get(url, headers=headers, timeout=30)
+            
+            resp.raise_for_status()
+            data = resp.json()
+            
+            if data.get('code') != '00000':
+                print(f"API error for {symbol}: {data.get('msg')}")
+                return {"code": "error", "msg": data.get('msg'), "data": {"fillList": []}}
+            else:
+                fills_count = len(data.get('data', {}).get('fillList', []))
+                print(f"Found {fills_count} fills for {symbol}")
+            
+            return data
+        except Exception as e:
+            logger.error(f"futures_fills error for {symbol}: {e}")
+            return {"code": "error", "msg": str(e), "data": {"fillList": []}}
+
+    @staticmethod
+    def fetch_all_futures_history_for_symbol(client, symbol: str, start_time: Optional[int] = None,
+                                            end_time: Optional[int] = None, per_page: int = 100,
+                                            max_pages: Optional[int] = None, sleep_between: float = 0.12,
+                                            use_fills: bool = True) -> List[Dict]:
+        """
+        High-level paginator for futures historical data.
+        use_fills=True: fetch fills/trades (more likely to have data)
+        use_fills=False: fetch orders
+        """
+        all_items: List[Dict] = []
+        end_id: Optional[str] = None
+        page = 0
+
+        while True:
+            page += 1
+            try:
+                if use_fills:
+                    resp = client.get_futures_fills(
+                        symbol=symbol, 
+                        start_time=start_time, 
+                        end_time=end_time,
+                        limit=per_page, 
+                        end_id=end_id
+                    )
+                else:
+                    resp = client.get_futures_history_orders(
+                        symbol=symbol, 
+                        start_time=start_time, 
+                        end_time=end_time,
+                        limit=per_page, 
+                        end_id=end_id
+                    )
+            except Exception as e:
+                logger.exception("Error calling API: %s", e)
+                time.sleep(1.0)
+                continue
+
+            # Check API response
+            if resp.get('code') != '00000':
+                logger.error(f"API Error for {symbol}: {resp.get('msg')}")
+                break
+
+            # Get data from response
+            data = resp.get('data', {})
+            if use_fills:
+                items = data.get('fillList', []) if isinstance(data, dict) else []
+            else:
+                items = data.get('orderList', []) if isinstance(data, dict) else []
+            
+            if not items:
+                logger.info(f"No more items for {symbol} on page {page}")
+                break
+
+            all_items.extend(items)
+            
+            # Check if there are more pages
+            next_flag = data.get('nextFlag', False) if isinstance(data, dict) else False
+            if not next_flag or len(items) < per_page:
+                logger.info(f"No more pages for {symbol} (nextFlag: {next_flag})")
+                break
+
+            # Use appropriate ID field for pagination
+            if use_fills:
+                end_id = items[-1].get('tradeId') or items[-1].get('fillId')
+            else:
+                end_id = items[-1].get('orderId')
+                
+            if not end_id:
+                logger.warning(f"No ID found in last item for {symbol}")
+                break
+
+            logger.info(f"Fetched page {page} for {symbol}, got {len(items)} items, total so far: {len(all_items)}")
+
+            if max_pages and page >= max_pages:
+                break
+
+            time.sleep(sleep_between)
+
+        logger.info(f"Total fetched for {symbol}: {len(all_items)} items")
+        return all_items
