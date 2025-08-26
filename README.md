@@ -97,7 +97,7 @@ AWS_REGION=us-east-1  # Opcional, para despliegue en AWS
 1. Clonar el repositorio
 2. Crear y activar entorno virtual:
    ```bash
-   python -m venv venv
+   python -m venv venv #se recomienda python 3.11
    source venv/bin/activate  # En Windows: .\venv\Scripts\activate
    ```
 3. Instalar dependencias:
@@ -110,7 +110,7 @@ AWS_REGION=us-east-1  # Opcional, para despliegue en AWS
 1. Configurar las variables de entorno en un archivo `.env`
 2. Iniciar la API:
    ```bash
-   python fastapi_app.main
+   python -m fastapi_app.main
    ```
 3. La API estará disponible en `http://127.0.0.1:8000`
 

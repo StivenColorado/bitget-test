@@ -66,36 +66,83 @@ def extract_orders_local(symbols: List[str]) -> Dict:
     }
 
 def extract_orders_aws(symbols: List[str]) -> Dict:
-    """Extract orders using AWS Step Functions"""
+    print(f"ejecutando extract_orders_aws con symbols: {symbols}")
+    """Extract orders using AWS Step Functions (LocalStack) and save result to LocalStack S3"""
     try:
-        client = boto3.client('stepfunctions', region_name=os.getenv('AWS_REGION'))
-        
+        # Step Functions client apuntando a LocalStack
+        sf_client = boto3.client(
+            'stepfunctions',
+            region_name=os.getenv('AWS_REGION', 'us-east-1'),
+            aws_access_key_id='test',
+            aws_secret_access_key='test',
+            endpoint_url='http://localhost:4566'
+        )
+
         input_data = {
             'symbols': symbols,
             'startTime': time.time()
         }
-        
-        response = client.start_execution(
-            stateMachineArn=os.getenv('STATE_MACHINE_ARN'),
+
+        # Inicia ejecución de Step Function
+        response = sf_client.start_execution(
+            stateMachineArn=os.getenv(
+                'STATE_MACHINE_ARN',
+                'arn:aws:states:us-east-1:000000000000:stateMachine:MyStateMachine'
+            ),
             input=json.dumps(input_data)
         )
-        
+
         execution_arn = response['executionArn']
-        
-        # Wait for completion (simplified for demo)
+
+        # Espera simulada a que la ejecución termine
         while True:
-            exec_response = client.describe_execution(executionArn=execution_arn)
+            exec_response = sf_client.describe_execution(executionArn=execution_arn)
             status = exec_response['status']
-            
+
             if status == 'SUCCEEDED':
                 result = json.loads(exec_response['output'])
-                return result
+                break
             elif status == 'FAILED':
                 raise Exception(f"Execution failed: {exec_response.get('error')}")
-            
-            time.sleep(2)
-            
+            time.sleep(1)
+
+        # Guardar resultado en S3 de LocalStack
+        s3_client = boto3.client(
+            's3',
+            region_name=os.getenv('AWS_REGION', 'us-east-1'),
+            aws_access_key_id='test',
+            aws_secret_access_key='test',
+            endpoint_url='http://localhost:4566'
+        )
+
+        bucket_name = 'bitget-results'
+        # Crear bucket si no existe
+        existing_buckets = [b['Name'] for b in s3_client.list_buckets().get('Buckets', [])]
+        if bucket_name not in existing_buckets:
+            print(f"Bucket '{bucket_name}' no existe, creando...")
+            s3_client.create_bucket(Bucket=bucket_name)
+        else:
+            print(f"Bucket '{bucket_name}' ya existe.")
+
+        # Guardar JSON (asegura que Body sea bytes)
+        json_bytes = json.dumps(result).encode('utf-8')
+        put_resp = s3_client.put_object(
+            Bucket=bucket_name,
+            Key='resultado.json',
+            Body=json_bytes
+        )
+        print(f"put_object response: {put_resp}")
+
+        # Verifica que el archivo se guardó correctamente
+        objects = s3_client.list_objects_v2(Bucket=bucket_name)
+        print(f"Objetos en bucket '{bucket_name}': {objects.get('Contents', [])}")
+
+        print(f"Result saved to LocalStack S3 bucket '{bucket_name}' as 'resultado.json'")
+
+        return result
+
     except Exception as e:
+        print(f"Error al guardar en S3: {e}")
         raise HTTPException(status_code=500, detail=f"AWS execution failed: {str(e)}")
 
 
