@@ -113,7 +113,7 @@ AWS_REGION=us-east-1  # Opcional, para despliegue en AWS
    cd fastapi_app
    uvicorn main:app --reload
    ```
-3. La API estará disponible en `http://localhost:8000`
+3. La API estará disponible en `http://127.0.0.1:8000`
 
 ### Despliegue en AWS
 
@@ -130,7 +130,7 @@ AWS_REGION=us-east-1  # Opcional, para despliegue en AWS
 
 ```bash
 curl -X 'POST' \
-  'http://localhost:8000/extract' \
+  'http://127.0.0.1:8000/extract' \
   -H 'Content-Type: application/json' \
   -d '{"symbols": ["BTCUSDT", "ETHUSDT"]}'
 ```
