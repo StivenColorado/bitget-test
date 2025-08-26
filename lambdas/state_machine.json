@@ -1,0 +1,31 @@
+{
+  "Comment": "Bitget Orders Extraction with parallel processing",
+  "StartAt": "ProcessSymbols",
+  "States": {
+    "ProcessSymbols": {
+      "Type": "Map",
+      "ItemsPath": "$.symbols",
+      "MaxConcurrency": 10,
+      "Iterator": {
+        "StartAt": "ExtractOrders",
+        "States": {
+          "ExtractOrders": {
+            "Type": "Task",
+            "Resource": "${WorkerLambdaArn}",
+            "Parameters": {
+              "symbol.$": "$"
+            },
+            "End": true
+          }
+        }
+      },
+      "ResultPath": "$.results",
+      "Next": "CollectResults"
+    },
+    "CollectResults": {
+      "Type": "Task",
+      "Resource": "${CollectorLambdaArn}",
+      "End": true
+    }
+  }
+}
