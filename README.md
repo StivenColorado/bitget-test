@@ -110,8 +110,7 @@ AWS_REGION=us-east-1  # Opcional, para despliegue en AWS
 1. Configurar las variables de entorno en un archivo `.env`
 2. Iniciar la API:
    ```bash
-   cd fastapi_app
-   uvicorn main:app --reload
+   python fastapi_app.main
    ```
 3. La API estará disponible en `http://127.0.0.1:8000`
 
