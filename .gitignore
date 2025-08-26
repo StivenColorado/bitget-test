@@ -1,7 +1,7 @@
 # Environment variables
 .env
 .env.example
-
+.aws-sam/
 # Python
 __pycache__/
 *.py[cod]
